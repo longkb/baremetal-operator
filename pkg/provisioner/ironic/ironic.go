@@ -1,6 +1,7 @@
 package ironic
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -713,7 +714,7 @@ func (p *ironicProvisioner) getUpdateOptsForNode(ironicNode *nodes.Node, checksu
 	return updates, nil
 }
 
-func (p *ironicProvisioner) startProvisioning(ironicNode *nodes.Node, checksum string, getUserData provisioner.UserDataSource) (result provisioner.Result, err error) {
+func (p *ironicProvisioner) startProvisioning(ironicNode *nodes.Node, checksum string, getUserData provisioner.UserDataSource, configSteps string) (result provisioner.Result, err error) {
 
 	p.log.Info("starting provisioning")
 
@@ -759,7 +760,12 @@ func (p *ironicProvisioner) startProvisioning(ironicNode *nodes.Node, checksum s
 		fmt.Sprintf("Image provisioning started for %s", p.host.Spec.Image.URL))
 
 	var opts nodes.ProvisionStateOpts
-	if ironicNode.ProvisionState == nodes.DeployFail {
+	if configSteps != "" {
+		// Get cleanStep if needed
+		cleanSteps, _ := p.cleanStepsConverter(configSteps)
+		cleanSteps[0].Args["settings"] = `[{"name": "hyper_threading_enabled", "value": "false"}]`
+		opts = nodes.ProvisionStateOpts{Target: nodes.TargetClean, CleanSteps: cleanSteps}
+	} else if nodes.ProvisionState(ironicNode.ProvisionState) == nodes.DeployFail {
 		opts = nodes.ProvisionStateOpts{Target: nodes.TargetActive}
 	} else {
 		opts = nodes.ProvisionStateOpts{Target: nodes.TargetProvide}
@@ -767,10 +773,21 @@ func (p *ironicProvisioner) startProvisioning(ironicNode *nodes.Node, checksum s
 	return p.changeNodeProvisionState(ironicNode, opts)
 }
 
+// cleanStepsConverter
+func (p * ironicProvisioner) cleanStepsConverter(configSteps string) (cleanSteps []nodes.CleanStep, err error){
+	err = json.Unmarshal([]byte(configSteps), &cleanSteps)
+	if err != nil {
+		log.Error(err, "")
+		return cleanSteps, err
+	}
+	return cleanSteps, nil
+}
+
 // Provision writes the image from the host spec to the host. It may
 // be called multiple times, and should return true for its dirty flag
 // until the deprovisioning operation is completed.
-func (p *ironicProvisioner) Provision(getUserData provisioner.UserDataSource) (result provisioner.Result, err error) {
+func (p *ironicProvisioner) Provision(
+	getUserData provisioner.UserDataSource, configSteps string) (result provisioner.Result, err error) {
 	var ironicNode *nodes.Node
 
 	if ironicNode, err = p.findExistingHost(); err != nil {
@@ -825,10 +842,10 @@ func (p *ironicProvisioner) Provision(getUserData provisioner.UserDataSource) (r
 			return result, nil
 		}
 		p.log.Info("recovering from previous failure")
-		return p.startProvisioning(ironicNode, checksum, getUserData)
+		return p.startProvisioning(ironicNode, checksum, getUserData, configSteps)
 
 	case nodes.Manageable:
-		return p.startProvisioning(ironicNode, checksum, getUserData)
+		return p.startProvisioning(ironicNode, checksum, getUserData, configSteps)
 
 	case nodes.Available:
 		// After it is available, we need to start provisioning by

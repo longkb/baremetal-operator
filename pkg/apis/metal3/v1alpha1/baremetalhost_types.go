@@ -118,6 +118,9 @@ type BareMetalHostSpec struct {
 	// How do we connect to the BMC?
 	BMC BMCDetails `json:"bmc"`
 
+	// Extra Ironic configuration
+	ConfigSteps string `json:"configSteps,omitempty"`
+
 	// What is the name of the hardware profile for this host? It
 	// should only be necessary to set this when inspection cannot
 	// automatically determine the profile.
@@ -417,6 +420,15 @@ func (host *BareMetalHost) HasError() bool {
 func (host *BareMetalHost) CredentialsKey() types.NamespacedName {
 	return types.NamespacedName{
 		Name:      host.Spec.BMC.CredentialsName,
+		Namespace: host.ObjectMeta.Namespace,
+	}
+}
+
+// ConfigKey returns a NamespacedName suitable for loading the
+// ConfigMap containing the steps that will be run in Ironic.
+func (host *BareMetalHost) ConfigKey() types.NamespacedName {
+	return types.NamespacedName{
+		Name:      host.Spec.ConfigSteps,
 		Namespace: host.ObjectMeta.Namespace,
 	}
 }

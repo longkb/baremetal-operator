@@ -47,3 +47,14 @@ func (e SaveBMCSecretOwnerError) Error() string {
 	return fmt.Sprintf("Failed to set owner of BMC secret %s",
 		e.message)
 }
+
+// ResolveConfigStepsRefError is returned when the ConfigMap
+// for steps is defined but cannot be found
+type ResolveConfigStepsRefError struct {
+	message string
+}
+
+func (e ResolveConfigStepsRefError) Error() string {
+	return fmt.Sprintf("Config steps ConfigMap doesn't exist %s",
+		e.message)
+}

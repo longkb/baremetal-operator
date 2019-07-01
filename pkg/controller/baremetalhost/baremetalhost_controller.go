@@ -122,6 +122,7 @@ type reconcileInfo struct {
 	host           *metal3v1alpha1.BareMetalHost
 	request        reconcile.Request
 	bmcCredsSecret *corev1.Secret
+	configSteps    string
 	events         []corev1.Event
 	errorMessage   string
 }
@@ -259,6 +260,13 @@ func (r *ReconcileBareMetalHost) Reconcile(request reconcile.Request) (result re
 		}
 	}
 
+	// Get extra config steps
+	host.Spec.ConfigSteps = "cm-bm0"
+	steps, err := r.getConfigSteps(request, host)
+	if err != nil {
+		log.Info(err.Error())
+	}
+
 	// Pick the action to perform
 	var actionName metal3v1alpha1.ProvisioningState
 	switch {
@@ -298,6 +306,7 @@ func (r *ReconcileBareMetalHost) Reconcile(request reconcile.Request) (result re
 		host:           host,
 		request:        request,
 		bmcCredsSecret: bmcCredsSecret,
+		configSteps:    steps,
 	}
 	prov, err := r.provisionerFactory(host, *bmcCreds, info.publishEvent)
 	if err != nil {
@@ -599,7 +608,7 @@ func (r *ReconcileBareMetalHost) actionProvisioning(prov provisioner.Provisioner
 
 	info.log.Info("provisioning")
 
-	provResult, err = prov.Provision(getUserData)
+	provResult, err = prov.Provision(getUserData, info.configSteps)
 	if err != nil {
 		return result, errors.Wrap(err, "failed to provision")
 	}
@@ -869,4 +878,28 @@ func (r *ReconcileBareMetalHost) publishEvent(request reconcile.Request, event c
 
 func hostHasFinalizer(host *metal3v1alpha1.BareMetalHost) bool {
 	return utils.StringInList(host.Finalizers, metal3v1alpha1.BareMetalHostFinalizer)
+}
+
+func(r *ReconcileBareMetalHost) getConfigSteps(
+	request reconcile.Request, host *metal3v1alpha1.BareMetalHost) (
+	steps string, err error) {
+		if host.Spec.ConfigSteps == "" {
+			log.Info("No extra config steps for host")
+			return "", nil
+		}
+		log.Info(fmt.Sprintf("Fetching config steps from ConfigMap %s", host.Spec.ConfigSteps))
+
+		configKey := host.ConfigKey()
+		configSteps := &corev1.ConfigMap{}
+		err = r.client.Get(context.TODO(), configKey, configSteps)
+		if err != nil {
+			if k8serrors.IsNotFound(err) {
+				return "", &ResolveConfigStepsRefError{
+					message: fmt.Sprintf("The ConfigMap %s does not exist", configKey)}
+			}
+			return "", err
+		}
+		steps = configSteps.Data["steps"]
+		log.Info(fmt.Sprintf("Retrieve steps from ConfigMap %s", configSteps.Name))
+		return steps, nil
 }
