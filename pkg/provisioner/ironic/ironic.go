@@ -346,6 +346,10 @@ func (p *ironicProvisioner) ValidateManagementAccess() (result provisioner.Resul
 	}
 }
 
+func (p *ironicProvisioner) GetAccessDetails()(bmc.AccessDetails){
+	return p.bmcAccess
+}
+
 func (p *ironicProvisioner) changeNodeProvisionState(ironicNode *nodes.Node, opts nodes.ProvisionStateOpts) (result provisioner.Result, err error) {
 	p.log.Info("changing provisioning state",
 		"current", ironicNode.ProvisionState,
@@ -553,6 +557,39 @@ func (p *ironicProvisioner) InspectHardware() (result provisioner.Result, detail
 
 	details = getHardwareDetails(data)
 	p.publisher("InspectionComplete", "Hardware inspection completed")
+	return
+}
+
+//Enter cleaning state via manual cleaning
+func (p *ironicProvisioner) ManualCleaning(cleanSteps []nodes.CleanStep) (result provisioner.Result, finish bool, error error){
+	p.log.Info("Manual cleaning ", "status", p.host.OperationalStatus())
+
+	ironicNode, err := p.findExistingHost()
+	if err != nil {
+		err = errors.Wrap(err, "failed to find existing host")
+		return
+	}
+	if ironicNode == nil {
+		return result, true, fmt.Errorf("no ironic node for host")
+	}
+
+	nodeProvState := nodes.ProvisionState(ironicNode.ProvisionState)
+	if nodeProvState == nodes.Cleaning || nodeProvState == nodes.CleanWait {
+		p.log.Info("Manual cleaning is still in progress")
+		return result, false, nil
+	} else if nodeProvState == nodes.CleanFail {
+		p.log.Info("Manual cleaning failed")
+		result.ErrorMessage = "Manual cleaning failed"
+		return result, false, err
+	}
+
+	cleanOpts := nodes.ProvisionStateOpts{Target: nodes.TargetClean, CleanSteps: cleanSteps}
+	p.log.Info("Manual cleaning with ", "steps", cleanSteps)
+	result, err = p.changeNodeProvisionState(ironicNode, cleanOpts)
+
+	if err == nil {
+		p.publisher("Manual cleaning started", "Manual cleaning started")
+	}
 	return
 }
 

@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	"github.com/gophercloud/gophercloud/openstack/baremetal/v1/nodes"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -86,6 +87,10 @@ const (
 	// learn about the hardware components available there
 	StateInspecting ProvisioningState = "inspecting"
 
+	// StateCleaning means Ironic are running the referenced CleanSteps via
+	// manual cleaning for RAID and BIOS configuration
+	StateCleaning ProvisioningState = "cleaning"
+
 	// StatePowerManagementError means something went wrong trying to
 	// power the server on or off.
 	StatePowerManagementError ProvisioningState = "power management error"
@@ -104,6 +109,49 @@ type BMCDetails struct {
 	CredentialsName string `json:"credentialsName"`
 }
 
+type RAIDVolume struct {
+	// Size (Integer) of the logical disk to be created in GiB.  If unspecified, "MAX" will be used.
+	SizeGB *int `json:"sizeGB"`
+
+	// RAID level for the logical disk.
+	RAIDLevel string `json:"raidLevel" required:"true"`
+
+	// Name of the volume. Should be unique within the Node. If not specified, volume name will be auto-generated.
+	VolumeName string `json:"volumeName,omitempty"`
+
+	// Set to true if this logical disk can share physical disks with other logical disks.
+	SharePhysicalDisks *bool `json:"sharePhysicalDisks,omitempty"`
+
+	// If this is not specified, disk type will not be a criterion to find backing physical disks
+	DiskType string `json:"diskType,omitempty"`
+
+	// If this is not specified, interface type will not be a criterion to find backing physical disks.
+	InterfaceType string `json:"interfaceType,omitempty"`
+
+	// Integer, number of disks to use for the logical disk. Defaults to minimum number of disks required
+	// for the particular RAID level.
+	NumberOfPhysicalDisks int `json:"numberOfPhysicalDisks,omitempty"`
+
+	// The name of the controller as read by the RAID interface.
+	Controller string `json:"controller,omitempty"`
+
+	// A list of physical disks to use as read by the RAID interface.
+	PhysicalDisks []string `json:"physicalDisks,omitempty"`
+}
+
+// RAIDConfig contains the configuration that are required to config RAID in Bare Metal server
+type RAIDConfig struct {
+
+	// The logical disk that will be root volume
+	RootVolume RAIDVolume `json:"rootVolume,omitempty"`
+
+	// The list of logical disks
+	Volumes []RAIDVolume `json:"volumes,omitempty"`
+}
+
+// BIOSConfig contains the configuration that are required to config BIOS in Bare Metal server
+type BIOSConfig map[string]interface{}
+
 // BareMetalHostSpec defines the desired state of BareMetalHost
 type BareMetalHostSpec struct {
 	// Important: Run "operator-sdk generate k8s" to regenerate code
@@ -117,6 +165,12 @@ type BareMetalHostSpec struct {
 
 	// How do we connect to the BMC?
 	BMC BMCDetails `json:"bmc,omitempty"`
+
+	// RAID configuration for baremetal server
+	RAID RAIDConfig `json:"raid,omitempty"`
+
+	// BIOS configurations for baremetal server
+	BIOS BIOSConfig `json:"bios,omitempty"`
 
 	// What is the name of the hardware profile for this host? It
 	// should only be necessary to set this when inspection cannot
@@ -337,6 +391,9 @@ type BareMetalHostStatus struct {
 	// The hardware discovered to exist on the host.
 	HardwareDetails *HardwareDetails `json:"hardware,omitempty"`
 
+	// The executed CleanSteps on the host.
+	CleanSteps []nodes.CleanStep `json:"cleanSteps,omitempty"`
+
 	// Information tracked by the provisioner.
 	Provisioning ProvisionStatus `json:"provisioning"`
 
@@ -528,6 +585,18 @@ func (host *BareMetalHost) NeedsHardwareInspection() bool {
 		return false
 	}
 	return host.Status.HardwareDetails == nil
+}
+
+// NeedManualCleaning looks at the state of the host to determine
+// if Clean Steps are needed to be run
+func (host *BareMetalHost) NeedsManualCleaning(cleanSteps []nodes.CleanStep) bool {
+	if host.Status.CleanSteps != nil {
+		return false
+	} else if len(cleanSteps) > 0 {
+		// Never run manual cleaning if RAID or BIOS is not configured
+		return true
+	}
+	return false
 }
 
 // NeedsProvisioning compares the settings with the provisioning
